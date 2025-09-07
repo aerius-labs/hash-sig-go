@@ -1,4 +1,3 @@
-// Package hypercube implements hypercube layer calculations for Target-Sum encoding
 package hypercube
 
 import (
@@ -6,232 +5,246 @@ import (
 	"sync"
 )
 
-// maxDimension is the maximum dimension precomputed for layer sizes
-const maxDimension = 100
+// MaxDimension is the maximum dimension precomputed for layer sizes
+const MaxDimension = 100
 
 // LayerInfo holds the sizes of each layer and their cumulative sums
 type LayerInfo struct {
-	sizes       []*big.Int // Number of vertices in each layer d
-	prefixSums  []*big.Int // Cumulative number of vertices up to layer d
+	Sizes      []*big.Int // Number of vertices in each layer d
+	PrefixSums []*big.Int // Cumulative number of vertices up to and including layer d
 }
 
-// NewLayerInfo creates layer info for given base w and dimension v
-func NewLayerInfo(w, v int) *LayerInfo {
-	// In a hypercube {0, ..., w-1}^v, layers are defined by the sum of coordinates
-	// Layer d contains all vertices where sum of coordinates = (w-1)*v - d
-	// So layer 0 has sum = (w-1)*v, layer (w-1)*v has sum = 0
-	// Maximum layer index is (w-1)*v
-	
-	maxLayer := v * (w - 1)
-	info := &LayerInfo{
-		sizes:      make([]*big.Int, maxLayer+1),
-		prefixSums: make([]*big.Int, maxLayer+1),
-	}
-	
-	// Calculate size of each layer using dynamic programming
-	// dp[layer][positions] = number of ways to achieve sum=(w-1)*v-layer using 'positions' coordinates
-	
-	for layer := 0; layer <= maxLayer; layer++ {
-		targetSum := (w-1)*v - layer
-		
-		if targetSum < 0 {
-			info.sizes[layer] = big.NewInt(0)
-		} else if targetSum == 0 {
-			// Only one way: all zeros
-			info.sizes[layer] = big.NewInt(1)
-		} else if targetSum == (w-1)*v {
-			// Only one way: all (w-1)s
-			info.sizes[layer] = big.NewInt(1)
-		} else {
-			// Count vertices with given sum using stars and bars
-			// This is the number of ways to write targetSum as sum of v non-negative integers,
-			// each at most w-1
-			info.sizes[layer] = countVerticesWithSum(w, v, targetSum)
-		}
-		
-		// Calculate prefix sum
-		if layer == 0 {
-			info.prefixSums[layer] = new(big.Int).Set(info.sizes[layer])
-		} else {
-			info.prefixSums[layer] = new(big.Int).Add(info.prefixSums[layer-1], info.sizes[layer])
-		}
-	}
-	
-	return info
-}
-
-// countVerticesWithSum counts vertices in {0,...,w-1}^v with coordinate sum = s
-func countVerticesWithSum(w, v, s int) *big.Int {
-	// Use inclusion-exclusion to count solutions to:
-	// x1 + x2 + ... + xv = s, where 0 <= xi < w
-	
-	if s < 0 || s > (w-1)*v {
-		return big.NewInt(0)
-	}
-	
-	result := big.NewInt(0)
-	
-	// Stars and bars with upper bounds using inclusion-exclusion
-	for k := 0; k <= v; k++ {
-		if s-k*w < 0 {
-			break
-		}
-		
-		// C(v, k) * C(s - k*w + v - 1, v - 1)
-		term := binomial(v, k)
-		term2 := binomial(s-k*w+v-1, v-1)
-		term.Mul(term, term2)
-		
-		if k%2 == 0 {
-			result.Add(result, term)
-		} else {
-			result.Sub(result, term)
-		}
-	}
-	
-	return result
-}
-
-// SizesSumInRange returns the sum of sizes in the inclusive range [start, end]
-func (info *LayerInfo) SizesSumInRange(start, end int) *big.Int {
+// SizesSumInRange returns sum of sizes in inclusive range [start, end]
+func (l *LayerInfo) SizesSumInRange(start, end int) *big.Int {
 	if start == 0 {
-		return new(big.Int).Set(info.prefixSums[end])
+		return new(big.Int).Set(l.PrefixSums[end])
 	}
-	return new(big.Int).Sub(info.prefixSums[end], info.prefixSums[start-1])
+	return new(big.Int).Sub(l.PrefixSums[end], l.PrefixSums[start-1])
 }
 
-// Cache for layer info, indexed by base w
-var layerCache = struct {
-	sync.RWMutex
-	data map[int]map[int]*LayerInfo // map[base]map[dimension]*LayerInfo
-}{
-	data: make(map[int]map[int]*LayerInfo),
+// AllLayerInfoForBase is a vector of LayerInfo, indexed by dimension v
+type AllLayerInfoForBase []*LayerInfo
+
+// Global cache for layer info (sizes and prefix sums) for each base w
+var (
+	allLayerInfoCache = make(map[int]AllLayerInfoForBase)
+	cacheMutex        sync.RWMutex
+)
+
+// getAllLayerData returns cached layer data for given base
+func getAllLayerData(w int) AllLayerInfoForBase {
+	cacheMutex.RLock()
+	info, exists := allLayerInfoCache[w]
+	cacheMutex.RUnlock()
+
+	if !exists {
+		cacheMutex.Lock()
+		// Double-check after acquiring write lock
+		if info, exists = allLayerInfoCache[w]; !exists {
+			info = prepareLayerInfo(w)
+			allLayerInfoCache[w] = info
+		}
+		cacheMutex.Unlock()
+	}
+
+	return info
 }
 
 // GetLayerInfo returns cached layer info for given base and dimension
 func GetLayerInfo(w, v int) *LayerInfo {
-	layerCache.RLock()
-	if baseMap, ok := layerCache.data[w]; ok {
-		if info, ok := baseMap[v]; ok {
-			layerCache.RUnlock()
-			return info
-		}
-	}
-	layerCache.RUnlock()
-	
-	// Need to create and cache
-	layerCache.Lock()
-	defer layerCache.Unlock()
-	
-	// Double-check after acquiring write lock
-	if baseMap, ok := layerCache.data[w]; ok {
-		if info, ok := baseMap[v]; ok {
-			return info
-		}
-	}
-	
-	// Create new layer info
-	info := NewLayerInfo(w, v)
-	
-	// Store in cache
-	if layerCache.data[w] == nil {
-		layerCache.data[w] = make(map[int]*LayerInfo)
-	}
-	layerCache.data[w][v] = info
-	
-	return info
+	allInfo := getAllLayerData(w)
+	return allInfo[v]
 }
 
-// CountVerticesTargetSum counts vertices with target sum in given layer range
-func CountVerticesTargetSum(w, v, s, minLayer, maxLayer int) *big.Int {
-	if s < 0 || minLayer > maxLayer || minLayer < 0 || maxLayer > v {
-		return big.NewInt(0)
+// prepareLayerInfo computes layer sizes and prefix sums by Lemma 8 in eprint 2025/889
+func prepareLayerInfo(w int) AllLayerInfoForBase {
+	vMax := MaxDimension
+	allInfo := make(AllLayerInfoForBase, vMax+1)
+
+	// Initialize with empty LayerInfo
+	for i := range allInfo {
+		allInfo[i] = &LayerInfo{}
 	}
-	
-	// Use dynamic programming to count vertices
-	// dp[layer][sum] = number of ways to achieve sum using exactly 'layer' coordinates
-	
-	dp := make(map[int]map[int]*big.Int)
-	
-	// Initialize: layer 0, sum 0 = 1 way (all zeros)
-	dp[0] = make(map[int]*big.Int)
-	dp[0][0] = big.NewInt(1)
-	
-	// Fill dp table
-	for layer := 1; layer <= maxLayer; layer++ {
-		dp[layer] = make(map[int]*big.Int)
-		
-		for prevSum := range dp[layer-1] {
-			if prevSum > s {
+
+	// Base case: dimension v = 1
+	dim1Sizes := make([]*big.Int, w)
+	for i := 0; i < w; i++ {
+		dim1Sizes[i] = big.NewInt(1)
+	}
+
+	dim1PrefixSums := make([]*big.Int, w)
+	for i := 0; i < w; i++ {
+		dim1PrefixSums[i] = big.NewInt(int64(i + 1))
+	}
+
+	allInfo[1] = &LayerInfo{
+		Sizes:      dim1Sizes,
+		PrefixSums: dim1PrefixSums,
+	}
+
+	// Inductive step: compute for dimensions v = 2 to vMax
+	for v := 2; v <= vMax; v++ {
+		maxD := (w - 1) * v
+
+		// Compute the sizes for the current dimension v
+		currentSizes := make([]*big.Int, maxD+1)
+		for d := 0; d <= maxD; d++ {
+			aiStart := max(1, max(w-d, 1))
+			aiEnd := min(w, w+(w-1)*(v-1)-d)
+
+			// If the summation range is invalid, the layer size is zero
+			if aiStart > aiEnd {
+				currentSizes[d] = big.NewInt(0)
 				continue
 			}
-			
-			// Try adding each possible value (1 to w-1) at this position
-			for val := 1; val < w; val++ {
-				newSum := prevSum + val
-				if newSum <= s {
-					if dp[layer][newSum] == nil {
-						dp[layer][newSum] = new(big.Int)
-					}
-					
-					// Add the number of ways from previous layer
-					// multiplied by number of positions we can place this value
-					ways := new(big.Int).Set(dp[layer-1][prevSum])
-					
-					// Number of unused positions = v - (layer-1)
-					unusedPos := v - layer + 1
-					ways.Mul(ways, big.NewInt(int64(unusedPos)))
-					
-					dp[layer][newSum].Add(dp[layer][newSum], ways)
-				}
+
+			// Map the range for a_i to a range for d' in the previous dimension
+			dPrimeStart := d - (w - aiStart)
+			dPrimeEnd := d - (w - aiEnd)
+
+			// Sum over the relevant slice of the previous dimension's layer sizes
+			currentSizes[d] = allInfo[v-1].SizesSumInRange(dPrimeStart, dPrimeEnd)
+		}
+
+		// Compute prefix sums from the newly calculated sizes
+		currentPrefixSums := make([]*big.Int, maxD+1)
+		currentSum := big.NewInt(0)
+		for i, size := range currentSizes {
+			currentSum = new(big.Int).Add(currentSum, size)
+			currentPrefixSums[i] = new(big.Int).Set(currentSum)
+		}
+
+		// Store both sizes and prefix sums
+		allInfo[v] = &LayerInfo{
+			Sizes:      currentSizes,
+			PrefixSums: currentPrefixSums,
+		}
+	}
+
+	return allInfo
+}
+
+// MapToVertex maps an integer x in [0, layer_size(v, d)) to a vertex in layer d
+// of the hypercube [0, w-1]^v
+func MapToVertex(w, v, d int, x *big.Int) []byte {
+	xCurr := new(big.Int).Set(x)
+	out := make([]byte, 0, v)
+	dCurr := d
+
+	layerData := getAllLayerData(w)
+
+	// Assert x < layer_size(v, d)
+	if xCurr.Cmp(layerData[v].Sizes[d]) >= 0 {
+		panic("x is too large for the given layer")
+	}
+
+	for i := 1; i < v; i++ {
+		ji := -1
+		rangeStart := max(0, dCurr-(w-1)*(v-i))
+
+		for j := rangeStart; j <= min(w-1, dCurr); j++ {
+			count := layerData[v-i].Sizes[dCurr-j]
+
+			if xCurr.Cmp(count) >= 0 {
+				xCurr.Sub(xCurr, count)
+			} else {
+				ji = j
+				break
 			}
 		}
-	}
-	
-	// Sum up counts for target sum s in the requested layer range
-	result := new(big.Int)
-	for layer := minLayer; layer <= maxLayer; layer++ {
-		if count, ok := dp[layer][s]; ok {
-			result.Add(result, count)
+
+		if ji < 0 || ji >= w {
+			panic("ji out of bounds")
 		}
+
+		ai := w - ji - 1
+		out = append(out, byte(ai))
+		dCurr -= w - 1 - ai
 	}
-	
-	return result
+
+	// Final coordinate
+	xCurrInt := int(xCurr.Int64())
+	if xCurrInt+dCurr >= w {
+		panic("final coordinate out of bounds")
+	}
+	out = append(out, byte(w-1-xCurrInt-dCurr))
+
+	return out
 }
 
-// binomial calculates the binomial coefficient "n choose k"
-func binomial(n, k int) *big.Int {
-	if k > n || k < 0 {
-		return big.NewInt(0)
-	}
-	if k == 0 || k == n {
-		return big.NewInt(1)
-	}
-	
-	// Use the formula: C(n,k) = n! / (k! * (n-k)!)
-	// But calculate it more efficiently as: C(n,k) = n*(n-1)*...*(n-k+1) / k!
-	
-	result := big.NewInt(1)
-	for i := 0; i < k; i++ {
-		result.Mul(result, big.NewInt(int64(n-i)))
-		result.Div(result, big.NewInt(int64(i+1)))
-	}
-	
-	return result
+// HypercubePartSize returns the total size of layers 0 to d (inclusive) in hypercube [0, w-1]^v
+func HypercubePartSize(w, v, d int) *big.Int {
+	layerData := getAllLayerData(w)
+	return new(big.Int).Set(layerData[v].PrefixSums[d])
 }
 
-// ComputeIndexBounds computes the bounds for vertex indices in a hypercube layer
-func ComputeIndexBounds(w, v, s, minLayer, maxLayer int) (*big.Int, *big.Int) {
-	info := GetLayerInfo(w, v)
-	
-	// Lower bound: sum of vertices in layers before minLayer
-	lowerBound := new(big.Int)
-	if minLayer > 0 {
-		lowerBound = info.SizesSumInRange(0, minLayer-1)
+// HypercubeFindLayer finds maximal d such that the total size L_<d of layers 0 to d-1 (inclusive)
+// in hypercube [0, w-1]^v is not bigger than x. Returns d and x-L_<d
+func HypercubeFindLayer(w, v int, x *big.Int) (int, *big.Int) {
+	layerData := getAllLayerData(w)
+	prefixSums := layerData[v].PrefixSums
+
+	// Assert x < total size (w^v)
+	if x.Cmp(prefixSums[len(prefixSums)-1]) >= 0 {
+		panic("x is larger than hypercube size")
 	}
-	
-	// Upper bound: sum of vertices up to and including maxLayer
-	upperBound := info.SizesSumInRange(0, maxLayer)
-	
-	return lowerBound, upperBound
+
+	// partition_point finds the index of the first element p for which p > x
+	// This index is the layer d where our value x resides
+	d := 0
+	for d < len(prefixSums) && prefixSums[d].Cmp(x) <= 0 {
+		d++
+	}
+
+	if d == 0 {
+		// x is in the very first layer (d=0). The remainder is x itself
+		return 0, new(big.Int).Set(x)
+	}
+
+	// The cumulative size of all layers up to d-1 is at prefixSums[d-1]
+	// The remainder is x minus this cumulative size
+	remainder := new(big.Int).Sub(x, prefixSums[d-1])
+	return d, remainder
+}
+
+// MapToInteger maps a vertex a in layer d to its index x in [0, layer_size(v, d))
+func MapToInteger(w, v, d int, a []byte) *big.Int {
+	if len(a) != v {
+		panic("vertex has wrong dimension")
+	}
+
+	xCurr := big.NewInt(0)
+	dCurr := w - 1 - int(a[v-1])
+
+	layerData := getAllLayerData(w)
+
+	for i := v - 2; i >= 0; i-- {
+		ji := w - 1 - int(a[i])
+		dCurr += ji
+		jStart := max(0, dCurr-(w-1)*(v-i-1))
+
+		rangeSum := layerData[v-i-1].SizesSumInRange(dCurr-ji+1, dCurr-jStart)
+		xCurr.Add(xCurr, rangeSum)
+	}
+
+	if dCurr != d {
+		panic("vertex is not in the claimed layer")
+	}
+
+	return xCurr
+}
+
+// Helper functions
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func max(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
 }

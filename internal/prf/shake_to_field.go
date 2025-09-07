@@ -10,7 +10,6 @@ import (
 )
 
 // ShakePRFtoField implements a PRF using SHAKE128 that outputs field elements
-// Matches Rust's ShakePRFtoF implementation
 type ShakePRFtoField struct {
 	keyLen       int
 	outputLenFE  int // Output length in field elements
@@ -44,7 +43,7 @@ func (p *ShakePRFtoField) Apply(key []byte, epoch uint32, chainIndex uint64) th.
 	// Use SHAKE128 to match Rust implementation
 	shake := sha3.NewShake128()
 	
-	// Write domain_sep || key || epoch || chainIndex (matches Rust order)
+	// Write domain_sep || key || epoch || chainIndex 
 	shake.Write(shakePRFDomainSep)
 	shake.Write(key)
 	
@@ -56,8 +55,8 @@ func (p *ShakePRFtoField) Apply(key []byte, epoch uint32, chainIndex uint64) th.
 	binary.BigEndian.PutUint64(chainBytes, chainIndex)
 	shake.Write(chainBytes)
 	
-	// Generate field elements using modular reduction (matches Rust)
-	// Rust uses 8 bytes per field element and takes mod
+	// Generate field elements using modular reduction 
+	// Uses 8 bytes per field element and takes mod
 	const bytesPerFE = 8
 	prfOutput := make([]byte, bytesPerFE*p.outputLenFE)
 	shake.Read(prfOutput)

@@ -158,9 +158,7 @@ func TestTweakDomainsDisjoint(t *testing.T) {
 	}
 }
 
-// Test exact encoding format matches Rust implementation
 func TestChainTweakFormat(t *testing.T) {
-	// Test specific values to ensure format matches Rust
 	tweak := ChainTweak(0x12345678, 0xAB, 0xCD)
 	
 	expected := []byte{
@@ -176,7 +174,6 @@ func TestChainTweakFormat(t *testing.T) {
 }
 
 func TestTreeTweakFormat(t *testing.T) {
-	// Test specific values to ensure format matches Rust
 	tweak := TreeTweak(0xAB, 0x12345678)
 	
 	expected := []byte{
@@ -191,12 +188,11 @@ func TestTreeTweakFormat(t *testing.T) {
 }
 
 func TestMessageTweakFormat(t *testing.T) {
-	// Test specific values to ensure format matches Rust
 	tweak := MessageTweak(0x12345678)
 	
 	expected := []byte{
 		0x02,                   // Separator
-		0x78, 0x56, 0x34, 0x12, // Epoch (little-endian) - matches Rust!
+		0x78, 0x56, 0x34, 0x12, // Epoch (little-endian) 
 	}
 	
 	if !bytes.Equal(tweak, expected) {

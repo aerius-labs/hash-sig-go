@@ -114,6 +114,28 @@ func (h *TopLevelPoseidonMessageHash) RandLen() int {
 	return h.randLen * 4
 }
 
+// Dimension returns the number of chunks
+func (h *TopLevelPoseidonMessageHash) Dimension() int {
+	return h.dimension
+}
+
+// Base returns the base value
+func (h *TopLevelPoseidonMessageHash) Base() int {
+	return h.base
+}
+
+// ChunkSize returns the chunk size in bits
+func (h *TopLevelPoseidonMessageHash) ChunkSize() int {
+	// For top-level Poseidon, chunk size is log2(base)
+	chunkSize := 0
+	base := h.base
+	for base > 1 {
+		base >>= 1
+		chunkSize++
+	}
+	return chunkSize
+}
+
 // encodeEpoch encodes the epoch as field elements
 func (h *TopLevelPoseidonMessageHash) encodeEpoch(epoch uint32) []babybear.Element {
 	// Pack as: (epoch << 8) | separator
@@ -161,96 +183,22 @@ func (h *TopLevelPoseidonMessageHash) poseidonCompress(perm *poseidon.Poseidon2,
 func (h *TopLevelPoseidonMessageHash) mapIntoHypercubePart(fieldElements []babybear.Element) []byte {
 	// Combine field elements into one big integer
 	acc := new(big.Int)
-	base := new(big.Int).SetUint64(2013265921)
+	orderU64 := new(big.Int).SetUint64(2013265921) // BabyBear field order
 	
 	for _, fe := range fieldElements {
-		acc.Mul(acc, base)
+		acc.Mul(acc, orderU64)
 		feBig := fe.BigInt(new(big.Int))
 		acc.Add(acc, feBig)
 	}
 	
-	// Get hypercube domain size for layers 0 to finalLayer
-	domSize := h.hypercubePartSize()
+	// Take this big integer modulo the total output domain size
+	domSize := hypercube.HypercubePartSize(h.base, h.dimension, h.finalLayer)
 	acc.Mod(acc, domSize)
 	
-	// Find which layer and offset within that layer
-	layer, offset := h.hypercubeFindLayer(acc)
+	// Figure out in which layer we are, and index of the vertex in the layer
+	layer, offset := hypercube.HypercubeFindLayer(h.base, h.dimension, acc)
 	
-	// Map to vertex coordinates
-	return h.mapToVertex(layer, offset)
+	// Map this to a vertex in layers 0, ..., FINAL_LAYER
+	return hypercube.MapToVertex(h.base, h.dimension, layer, offset)
 }
 
-// hypercubePartSize returns the total number of vertices in layers 0 to finalLayer
-func (h *TopLevelPoseidonMessageHash) hypercubePartSize() *big.Int {
-	info := hypercube.GetLayerInfo(h.base, h.dimension)
-	return info.SizesSumInRange(0, h.finalLayer)
-}
-
-// hypercubeFindLayer finds which layer contains the vertex at given index
-func (h *TopLevelPoseidonMessageHash) hypercubeFindLayer(index *big.Int) (int, *big.Int) {
-	info := hypercube.GetLayerInfo(h.base, h.dimension)
-	
-	cumulative := new(big.Int)
-	for layer := 0; layer <= h.finalLayer; layer++ {
-		// Use SizesSumInRange to get size of this layer
-		layerSize := new(big.Int)
-		if layer == 0 {
-			layerSize = info.SizesSumInRange(0, 0)
-		} else {
-			prev := info.SizesSumInRange(0, layer-1)
-			curr := info.SizesSumInRange(0, layer)
-			layerSize = new(big.Int).Sub(curr, prev)
-		}
-		
-		nextCumulative := new(big.Int).Add(cumulative, layerSize)
-		if index.Cmp(nextCumulative) < 0 {
-			// Found the layer
-			offset := new(big.Int).Sub(index, cumulative)
-			return layer, offset
-		}
-		cumulative = nextCumulative
-	}
-	
-	// Should not reach here if index is valid
-	return h.finalLayer, new(big.Int)
-}
-
-// mapToVertex maps layer and offset to actual vertex coordinates
-func (h *TopLevelPoseidonMessageHash) mapToVertex(layer int, offset *big.Int) []byte {
-	// This implements the mapping from (layer, offset) to actual hypercube coordinates
-	// For simplicity, using a basic mapping - full implementation would need
-	// combinatorial number system decoding
-	
-	vertex := make([]byte, h.dimension)
-	
-	if layer == 0 {
-		// Layer 0 is all (base-1)s
-		for i := range vertex {
-			vertex[i] = byte(h.base - 1)
-		}
-	} else {
-		// Distribute the "deficit" from all (base-1)s across coordinates
-		// This is a simplified version - full implementation needs proper
-		// combinatorial decoding
-		
-		remaining := offset
-		positions := h.dimension
-		
-		for i := 0; i < h.dimension && positions > 0; i++ {
-			// Simplified distribution
-			if remaining.Sign() > 0 && positions > 0 {
-				val := new(big.Int).Div(remaining, big.NewInt(int64(positions)))
-				if val.Cmp(big.NewInt(int64(h.base-1))) > 0 {
-					val = big.NewInt(int64(h.base - 1))
-				}
-				vertex[i] = byte(h.base - 1 - int(val.Int64()))
-				remaining.Sub(remaining, val)
-				positions--
-			} else {
-				vertex[i] = byte(h.base - 1)
-			}
-		}
-	}
-	
-	return vertex
-}

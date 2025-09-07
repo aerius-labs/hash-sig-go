@@ -82,11 +82,9 @@ func (p *PoseidonTweakHash) Apply(params th.Params, tweak th.Tweak, data []th.Do
 
 // TreeTweak creates a tree tweak
 func (p *PoseidonTweakHash) TreeTweak(level uint8, posInLevel uint32) th.Tweak {
-	tweak := make([]byte, 0, 9)
-	tweak = append(tweak, TweakSeparatorTreeHash)
-	
 	// Pack as: (level << 40) | (posInLevel << 8) | separator
 	// But we'll store it more simply for Go
+	// This is little endian so separator is first, ie in teh lowest byte
 	levelBytes := make([]byte, 8)
 	binary.LittleEndian.PutUint64(levelBytes, uint64(level)<<40 | uint64(posInLevel)<<8 | TweakSeparatorTreeHash)
 	return levelBytes
