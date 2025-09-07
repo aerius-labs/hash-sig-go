@@ -37,15 +37,16 @@ import (
     
     "github.com/aerius-labs/hash-sig-go/encoding/winternitz"
     "github.com/aerius-labs/hash-sig-go/internal/prf"
-    "github.com/aerius-labs/hash-sig-go/th/sha3"
+    "github.com/aerius-labs/hash-sig-go/th/message_hash"
+    "github.com/aerius-labs/hash-sig-go/th/tweak_hash"
     "github.com/aerius-labs/hash-sig-go/xmss"
 )
 
 func main() {
     // Setup components
     prfInstance := prf.NewSHA3PRF(24, 24)
-    thInstance := sha3.NewSHA3TweakableHash(24, 24)
-    mhInstance := sha3.NewSHA3MessageHash(24, 24, 48, 4)
+    thInstance := tweak_hash.NewSHA3TweakableHash(24, 24)
+    mhInstance := message_hash.NewSHA3MessageHash(24, 24, 48, 4)
     
     // Create Winternitz encoding
     checksumLen := winternitz.ComputeChecksumLength(48, 4)
