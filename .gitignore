@@ -1,0 +1,26 @@
+# Binaries
+hashsig-cli
+
+# Output of go coverage tool
+*.out
+coverage.html
+
+# Dependency directories
+vendor/
+
+# Go workspace file
+go.work
+
+# Generated key files and signatures
+*.pk
+*.sk
+*.config
+*.bin
+*.sig
+
+.DS_Store
+.vscode/
+
+# Test artifacts
+test-key*
+test-sig*
